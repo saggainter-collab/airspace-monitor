@@ -64,27 +64,55 @@ def route_for(callsign):
     return route
 
 
-# NOTAMs - FAA NOTAM Search (includes international NOTAMs by ICAO location)
+# ---------------------------------------------------------------------------
+# NOTAMs - two free FAA sources (both include international ICAO locations).
+# Source 1: FAA NOTAM Search (JSON). Source 2: FAA DINS (raw text), fallback.
+# Every attempt is logged so problems are visible in the GitHub run log.
+# ---------------------------------------------------------------------------
+import html as _html
+import re as _re
+
 NOTAM_URL = "https://notams.aim.faa.gov/notamSearch/search"
+DINS_URL = "https://www.notams.faa.gov/dinsQueryWeb/queryRetrievalMapAction.do"
+BROWSER = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Origin": "https://notams.aim.faa.gov",
+    "Referer": "https://notams.aim.faa.gov/notamSearch/nsapp.html",
+}
+_notam_source = {"ok": None}  # remembers which source worked this run
 
 
-def fetch_notams(location):
-    """Return list of NOTAM dicts for one ICAO location (FIR or aerodrome)."""
+def _log(msg):
+    print(f"[NOTAM] {msg}", flush=True)
+
+
+def _fetch_search(location):
     out, offset = [], 0
-    for _ in range(20):  # safety cap on pages
+    for _ in range(20):
         data = {
             "searchType": "0",
             "designatorsForLocation": location,
             "offset": str(offset),
             "notamsOnly": "false",
+            "radius": "10",
+            "sortColumns": "5 false",
+            "sortDirection": "true",
         }
         try:
-            r = requests.post(NOTAM_URL, data=data, headers=UA, timeout=TIMEOUT)
-            if r.status_code != 200:
-                break
+            r = requests.post(NOTAM_URL, data=data, headers=BROWSER, timeout=TIMEOUT)
+        except requests.RequestException as e:
+            _log(f"search {location}: network error {e}")
+            return None
+        if r.status_code != 200:
+            _log(f"search {location}: HTTP {r.status_code} {r.text[:150]!r}")
+            return None
+        try:
             js = r.json()
-        except (requests.RequestException, ValueError):
-            break
+        except ValueError:
+            _log(f"search {location}: not JSON {r.text[:150]!r}")
+            return None
         items = js.get("notamList") or []
         out.extend(items)
         total = int(js.get("totalNotamCount") or 0)
@@ -93,3 +121,56 @@ def fetch_notams(location):
             break
         time.sleep(0.5)
     return out
+
+
+_PRE_RE = _re.compile(r"<PRE>(.*?)</PRE>", _re.S | _re.I)
+_ID_RE = _re.compile(r"\b([A-Z]\d{4}/\d{2})\b")
+_A_RE = _re.compile(r"A\)\s*([A-Z]{4})")
+
+
+def _fetch_dins(location):
+    params = {
+        "reportType": "Raw",
+        "retrieveLocId": location,
+        "actionType": "notamRetrievalbyICAOs",
+    }
+    try:
+        r = requests.get(DINS_URL, params=params, headers={"User-Agent": BROWSER["User-Agent"]},
+                         timeout=TIMEOUT)
+    except requests.RequestException as e:
+        _log(f"dins {location}: network error {e}")
+        return None
+    if r.status_code != 200:
+        _log(f"dins {location}: HTTP {r.status_code}")
+        return None
+    out = []
+    for block in _PRE_RE.findall(r.text):
+        text = _html.unescape(_re.sub(r"<[^>]+>", "", block)).strip()
+        m = _ID_RE.search(text)
+        if not m:
+            continue
+        a = _A_RE.search(text)
+        out.append({
+            "icaoMessage": text,
+            "notamNumber": m.group(1),
+            "facilityDesignator": a.group(1) if a else location,
+        })
+    if not out and "NOTAM" not in r.text.upper():
+        _log(f"dins {location}: unexpected page {r.text[:150]!r}")
+        return None
+    return out
+
+
+def fetch_notams(location):
+    """Return list of NOTAM dicts for one ICAO location, or None if all sources fail."""
+    order = [_fetch_search, _fetch_dins]
+    if _notam_source["ok"] is _fetch_dins:
+        order = [_fetch_dins, _fetch_search]
+    for fn in order:
+        items = fn(location)
+        if items is not None:
+            if _notam_source["ok"] is not fn:
+                _log(f"using source: {fn.__name__} ({len(items)} items for {location})")
+            _notam_source["ok"] = fn
+            return items
+    return None

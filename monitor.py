@@ -72,8 +72,9 @@ def check_notams(st, now, first_run):
 
     for loc in locations:
         items = S.fetch_notams(loc)
-        if items:
-            fetched_any = True
+        if items is None:
+            continue
+        fetched_any = True
         for n in items:
             text = n.get("icaoMessage") or n.get("traditionalMessage") or ""
             num = n.get("notamNumber") or ""
@@ -106,7 +107,7 @@ def check_notams(st, now, first_run):
             f"🕒 {now_local_str()}"
         )
 
-    if first_run:
+    if first_run and fetched_any:
         lines = [
             "✅ <b>Airspace Monitor started</b>",
             f"Watching {len(C.FIRS)} FIRs and {len(C.AIRPORTS)} airports.",
@@ -263,10 +264,14 @@ def heartbeat(st):
 def main():
     start = time.time()
     st = load_state()
-    first_run = not st.get("initialized")
+    # NOTAM baseline is taken on the first SUCCESSFUL fetch, so a source
+    # outage at start-up never causes a flood of "new" alerts later.
+    first_run = not st.get("notams_seeded")
 
     ok = check_notams(st, int(time.time()), first_run)
     source_warning(st, int(time.time()), "NOTAMs", ok)
+    if ok:
+        st["notams_seeded"] = True
     st["initialized"] = True
     save_state(st)
 
