@@ -147,3 +147,22 @@ def check_diversion(callsign, lat, lon, alt, route, airports, max_dist_nm=15, ma
     if apt and d <= max_dist_nm and apt not in route:
         return apt
     return None
+
+
+# ---------------------------------------------------------------------------
+# Flight phase from recent track: "climb", "descent" or None
+# ---------------------------------------------------------------------------
+def flight_phase(points, current_alt=None):
+    alts = [p[3] for p in points if isinstance(p[3], (int, float))]
+    if current_alt == "ground":
+        # on ground: arrival only if we saw it airborne before
+        return "descent" if alts and max(alts) >= 2000 else None
+    if isinstance(current_alt, (int, float)):
+        alts = alts + [current_alt]
+    if len(alts) < 2:
+        return None
+    if alts[-1] - min(alts) >= 800 and alts[-1] >= alts[0]:
+        return "climb"
+    if max(alts) - alts[-1] >= 1500 and alts[-1] <= alts[0]:
+        return "descent"
+    return None

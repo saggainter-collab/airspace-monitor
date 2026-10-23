@@ -186,22 +186,42 @@ def check_holds(st, now, current):
 
 
 def check_diversions(st, now, current):
+    """Alert only when a flight is clearly ARRIVING at an airport that is not
+    on its published route. If we see a flight DEPART from an airport that is
+    not its published origin, its route data is stale: ignore it for 24 h."""
     prefixes = tuple(p.upper() for p in C.DIVERSION_CALLSIGN_PREFIXES)
+    bad = st.setdefault("bad_routes", {})
+    for k in [k for k, v in bad.items() if now - v > 86400]:
+        del bad[k]
+    tracks = st.get("tracks", {})
+
     for hexid, ac in current.items():
         cs = (ac.get("flight") or "").strip().upper()
         if not cs.startswith(prefixes) or ac.get("lat") is None:
             continue
         alt = ac.get("alt_baro")
-        if isinstance(alt, (int, float)) and alt > 4000:
+        if isinstance(alt, (int, float)) and alt > 6000:
             continue
         route = S.route_for(cs)
-        apt = D.check_diversion(cs, ac["lat"], ac["lon"], alt, route, C.AIRPORTS)
-        if apt and cooled_down(st, "diversion", f"{hexid}:{apt}", now):
+        if not route or cs in bad:
+            continue
+        phase = D.flight_phase(tracks.get(hexid, [])[:-1], alt)
+        apt, dist = D.nearest_airport(ac["lat"], ac["lon"], C.AIRPORTS)
+
+        if phase == "climb" and dist <= 20 and route[0] and apt != route[0]:
+            bad[cs] = now
+            print(f"[ROUTE] {cs}: departed {apt}, database says {route[0]}; route ignored 24h")
+            continue
+        if phase != "descent":
+            continue
+
+        div_apt = D.check_diversion(cs, ac["lat"], ac["lon"], alt, route, C.AIRPORTS)
+        if div_apt and cooled_down(st, "diversion", f"{hexid}:{div_apt}", now):
             N.send(
                 f"🟣 <b>POSSIBLE DIVERSION</b>\n"
                 f"✈️ {N.esc(ac_label(ac))}\n"
                 f"🛫 Planned: {route[0] or '?'} → {route[1] or '?'}\n"
-                f"🛬 Now landing at: {apt} ({N.esc(C.AIRPORTS[apt][0])})\n"
+                f"🛬 Now landing at: {div_apt} ({N.esc(C.AIRPORTS[div_apt][0])})\n"
                 f"ℹ️ Route data comes from a public schedule database; please confirm.\n\n"
                 f"{map_link(hexid)}\n\n"
                 f"🕒 {now_local_str()}"

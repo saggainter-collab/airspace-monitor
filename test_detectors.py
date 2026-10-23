@@ -81,6 +81,16 @@ def test_diversion():
     assert D.check_diversion("KNE123", 24.56, 39.71, 30000, ("OERK", "OEJN"), C.AIRPORTS) is None
 
 
+
+def test_flight_phase():
+    dep = [[0, 0, 0, 0, 150, ""], [30, 0, 0, 1500, 180, ""], [60, 0, 0, 3200, 200, ""]]
+    arr = [[0, 0, 0, 9000, 250, ""], [30, 0, 0, 6000, 220, ""], [60, 0, 0, 3500, 180, ""]]
+    assert D.flight_phase(dep[:-1], 3200) == "climb"
+    assert D.flight_phase(arr[:-1], 3500) == "descent"
+    assert D.flight_phase(arr, "ground") == "descent"
+    assert D.flight_phase([], "ground") is None
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
