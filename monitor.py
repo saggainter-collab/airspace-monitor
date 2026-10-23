@@ -151,16 +151,21 @@ def update_tracks(st, now, ac_list):
 
 def sweep_airports(st, now):
     """Poll traffic around every airport. Returns dict hex -> aircraft."""
-    seen, ok = {}, False
+    seen, ok, counts, failed = {}, False, {}, []
     for icao, (_, lat, lon) in C.AIRPORTS.items():
         acs = S.aircraft_near(lat, lon, C.AIRPORT_RADIUS_NM)
         if acs is None:
+            failed.append(icao)
             continue
         ok = True
+        counts[icao] = len(acs)
         for ac in acs:
             if ac.get("hex"):
                 seen[ac["hex"]] = ac
     update_tracks(st, now, seen.values())
+    busiest = sorted(counts.items(), key=lambda x: -x[1])[:8]
+    print(f"[SWEEP] {datetime.now(RIYADH):%H:%M:%S} aircraft={len(seen)} "
+          f"top={busiest} failed={failed}", flush=True)
     return seen, ok
 
 
@@ -169,6 +174,8 @@ def check_holds(st, now, current):
         if hexid not in current:
             continue
         h = D.detect_hold(pts, C.HOLD_WINDOW_SEC)
+        if h:
+            print(f"[HOLD] {hexid} {(current[hexid].get('flight') or '').strip()} {h}", flush=True)
         if not h or not cooled_down(st, "hold", hexid, now):
             continue
         ac = current[hexid]

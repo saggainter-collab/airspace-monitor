@@ -64,7 +64,7 @@ AIRPORTS = {
 }
 
 # Radius (NM) of the live-traffic circle polled around each airport
-AIRPORT_RADIUS_NM = 40
+AIRPORT_RADIUS_NM = 60
 
 # ---------------------------------------------------------------------------
 # 3) Region box for emergency squawk alerts (lat_min, lat_max, lon_min, lon_max)
